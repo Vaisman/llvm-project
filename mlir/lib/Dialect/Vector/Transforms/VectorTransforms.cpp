@@ -1872,7 +1872,7 @@ struct CanonicalizeContractMatmulToMMT final
     }
     rewriter.replaceOpWithNewOp<vector::ContractionOp>(
         op, lhs, rhs, res, rewriter.getAffineMapArrayAttr(canonicalForm),
-        op.getIteratorTypes());
+        op.getIteratorTypes(), op.getKind(), op.getFastmath());
     return success();
   };
 

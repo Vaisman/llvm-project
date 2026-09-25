@@ -165,6 +165,29 @@ func.func @negative_combining_kind(%lhs: vector<8x16xf16>, %rhs: vector<16x16xf1
 
 // -----
 
+// Preparing the contraction for MMA must keep its kind, so it is still
+// rejected rather than turned into a dpas sum.
+#map = affine_map<(d0, d1, d2) -> (d2, d0)>
+#map1 = affine_map<(d0, d1, d2) -> (d2, d1)>
+#map2 = affine_map<(d0, d1, d2) -> (d0, d1)>
+func.func @negative_combining_kind_transposed_lhs(%lhs: vector<16x8xf16>,
+    %rhs: vector<16x16xf16>, %acc: vector<8x16xf32>) -> vector<8x16xf32> {
+  %3 = vector.contract
+    {indexing_maps = [#map, #map1, #map2],
+    iterator_types = ["parallel", "parallel", "reduction"],
+    kind = #vector.kind<maxnumf>} %lhs, %rhs, %acc
+    : vector<16x8xf16>, vector<16x16xf16> into vector<8x16xf32>
+  return %3 : vector<8x16xf32>
+}
+
+// CHECK-LABEL: @negative_combining_kind_transposed_lhs(
+// CHECK-NOT:   xegpu.dpas
+// CHECK:       vector.contract {{.*}}kind = #vector.kind<maxnumf>
+// CHECK-NOT:   xegpu.dpas
+// CHECK:       return
+
+// -----
+
 #map = affine_map<(d0, d1, d2) -> (d0, d2)>
 #map1 = affine_map<(d0, d1, d2) -> (d2, d1)>
 #map2 = affine_map<(d0, d1, d2) -> ()>

@@ -77,6 +77,9 @@ static bool contractSupportsMMAMatrixType(vector::ContractionOp contract,
   };
   AffineExpr m, n, k;
   bindDims(contract.getContext(), m, n, k);
+  // MMA ops only accumulate with addition.
+  if (contract.getKind() != vector::CombiningKind::ADD)
+    return false;
   auto iteratorTypes = contract.getIteratorTypes().getValue();
   if (!(vector::isParallelIterator(iteratorTypes[0]) &&
         vector::isParallelIterator(iteratorTypes[1]) &&
@@ -467,7 +470,7 @@ struct PrepareContractToGPUMMA
     rewriter.replaceOpWithNewOp<vector::ContractionOp>(
         op, lhs, rhs, res,
         rewriter.getAffineMapArrayAttr(infer({{m, k}, {k, n}, {m, n}})),
-        op.getIteratorTypes());
+        op.getIteratorTypes(), op.getKind(), op.getFastmath());
     return success();
   }
 };

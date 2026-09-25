@@ -835,3 +835,28 @@ func.func @unsupported_transposed_store(%arg0: !smem_type,
   vector.transfer_write %D, %arg2[%c0, %c0] {in_bounds = [true, true], permutation_map = affine_map<(d0, d1)->(d1, d0)>} : vector<16x8xf16>, !smem_type
   return
 }
+
+// -----
+
+// mma.sync only accumulates with addition: a maxnumf contraction is not
+// converted, and bringing it into the MMT form keeps its kind.
+
+#map_mk = affine_map<(d0, d1, d2) -> (d0, d2)>
+#map_kn = affine_map<(d0, d1, d2) -> (d2, d1)>
+#map_mn = affine_map<(d0, d1, d2) -> (d0, d1)>
+
+// CHECK-LABEL: func @m16n8k16_fp16_maxnumf
+//   CHECK-NOT:   nvgpu.
+//       CHECK:   vector.contract {{.*}} kind = #vector.kind<maxnumf>
+//   CHECK-NOT:   nvgpu.
+//       CHECK:   return
+func.func @m16n8k16_fp16_maxnumf(%arg0: memref<16x16xf16, #gpu.address_space<workgroup>>, %arg1: memref<16x8xf16, #gpu.address_space<workgroup>>, %arg2: memref<16x8xf16>) {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f16
+  %A = vector.transfer_read %arg0[%c0, %c0], %cst {in_bounds = [true, true]} : memref<16x16xf16, #gpu.address_space<workgroup>>, vector<16x16xf16>
+  %B = vector.transfer_read %arg1[%c0, %c0], %cst {in_bounds = [true, true]} : memref<16x8xf16, #gpu.address_space<workgroup>>, vector<16x8xf16>
+  %C = vector.transfer_read %arg2[%c0, %c0], %cst {in_bounds = [true, true]} : memref<16x8xf16>, vector<16x8xf16>
+  %D = vector.contract {indexing_maps = [#map_mk, #map_kn, #map_mn], iterator_types = ["parallel", "parallel", "reduction"], kind = #vector.kind<maxnumf>} %A, %B, %C : vector<16x16xf16>, vector<16x8xf16> into vector<16x8xf16>
+  vector.transfer_write %D, %arg2[%c0, %c0] {in_bounds = [true, true]} : vector<16x8xf16>, memref<16x8xf16>
+  return
+}
