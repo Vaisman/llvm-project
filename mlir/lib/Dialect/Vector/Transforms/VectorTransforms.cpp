@@ -165,7 +165,8 @@ struct CombineContractABTranspose final
       return failure();
     rewriter.replaceOpWithNewOp<vector::ContractionOp>(
         contractOp, lhs, rhs, contractOp.getAcc(),
-        rewriter.getAffineMapArrayAttr(maps), contractOp.getIteratorTypes());
+        rewriter.getAffineMapArrayAttr(maps), contractOp.getIteratorTypes(),
+        contractOp.getKind(), contractOp.getFastmath());
     return success();
   }
 };
@@ -240,7 +241,8 @@ struct CombineContractResultTranspose final
 
     rewriter.replaceOpWithNewOp<vector::ContractionOp>(
         resTOp, contractOp.getLhs(), contractOp.getRhs(), accTOp.getVector(),
-        rewriter.getAffineMapArrayAttr(maps), contractOp.getIteratorTypes());
+        rewriter.getAffineMapArrayAttr(maps), contractOp.getIteratorTypes(),
+        contractOp.getKind(), contractOp.getFastmath());
     return success();
   }
 };
@@ -397,7 +399,8 @@ FailureOr<Value> combineContractAndBroadcast(vector::ContractionOp contractOp,
 
   Operation *newOp = vector::ContractionOp::create(
       rewriter, contractOp.getLoc(), lhs, rhs, contractOp.getAcc(),
-      rewriter.getAffineMapArrayAttr(maps), rewriter.getArrayAttr(iterators));
+      rewriter.getAffineMapArrayAttr(maps), rewriter.getArrayAttr(iterators),
+      contractOp.getKind(), contractOp.getFastmath());
 
   // Handle the mask.
   if (maskingOp) {
@@ -1916,7 +1919,8 @@ struct FoldArithExtIntoContractionOp
     rewriter.replaceOpWithNewOp<vector::ContractionOp>(
         contractOp, lhsDefOp->getOperand(0), rhsDefOp->getOperand(0),
         contractOp.getAcc(), contractOp.getIndexingMapsAttr(),
-        contractOp.getIteratorTypesAttr());
+        contractOp.getIteratorTypesAttr(), contractOp.getKind(),
+        contractOp.getFastmath());
 
     return success();
   }
