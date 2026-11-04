@@ -126,6 +126,31 @@ builtin.module {
     return
   }
 
+  // The copy size is computed from the bit width of the element type, which
+  // is not the storage size of i1 elements; index has no bit width.
+  // CHECK-LABEL: @negative_read_i1(
+  func.func @negative_read_i1(%a: memref<1024x1024xi1>) {
+    %0 = memref.alloc() : memref<4x32x32xi1, #gpu.address_space<workgroup>>
+    %c0 = arith.constant 0 : index
+    %pad = arith.constant false
+    // CHECK-NOT: nvgpu.device_async_copy
+    //     CHECK: vector.transfer_write
+    %1 = vector.transfer_read %a[%c0, %c0], %pad {in_bounds = [true]} : memref<1024x1024xi1>, vector<32xi1>
+    vector.transfer_write %1, %0[%c0, %c0, %c0] {in_bounds = [true]} : vector<32xi1>, memref<4x32x32xi1, #gpu.address_space<workgroup>>
+    return
+  }
+
+  // CHECK-LABEL: @negative_read_index(
+  func.func @negative_read_index(%a: memref<1024x1024xindex>) {
+    %0 = memref.alloc() : memref<4x32x16xindex, #gpu.address_space<workgroup>>
+    %c0 = arith.constant 0 : index
+    // CHECK-NOT: nvgpu.device_async_copy
+    //     CHECK: vector.transfer_write
+    %1 = vector.transfer_read %a[%c0, %c0], %c0 {in_bounds = [true]} : memref<1024x1024xindex>, vector<4xindex>
+    vector.transfer_write %1, %0[%c0, %c0, %c0] {in_bounds = [true]} : vector<4xindex>, memref<4x32x16xindex, #gpu.address_space<workgroup>>
+    return
+  }
+
   module attributes {transform.with_named_sequence} {
     transform.named_sequence @__transform_main(%variant_op: !transform.any_op {transform.readonly}) {
       %top_level_func = transform.structured.match ops{["func.func"]} in %variant_op : (!transform.any_op) -> !transform.any_op
@@ -273,6 +298,107 @@ builtin.module {
     return
   }
 
+  module attributes {transform.with_named_sequence} {
+    transform.named_sequence @__transform_main(%variant_op: !transform.any_op {transform.readonly}) {
+      %top_level_func = transform.structured.match ops{["func.func"]} in %variant_op : (!transform.any_op) -> !transform.any_op
+      transform.nvgpu.create_async_groups %top_level_func : (!transform.any_op) -> (!transform.any_op)
+      transform.yield
+    }
+  }
+}
+
+// -----
+
+// vector.transfer_read with a mask: the async copy zero-fills the elements it
+// does not read, so only a zero or poison padding is supported.
+builtin.module {
+  // CHECK-LABEL: @read_with_mask_i32_zero_padding(
+  func.func @read_with_mask_i32_zero_padding(%a: memref<1024x1024xi32>, %sz: index) {
+    %0 = memref.alloc() : memref<4x32x16xi32, #gpu.address_space<workgroup>>
+    %c0 = arith.constant 0 : index
+    %pad = arith.constant 0 : i32
+    // CHECK: nvgpu.device_async_copy {{.*}}, {{.*}}, 4, %{{.*}} :
+    %mask = vector.create_mask %sz : vector<4xi1>
+    %1 = vector.transfer_read %a[%c0, %c0], %pad, %mask {in_bounds = [true]} : memref<1024x1024xi32>, vector<4xi32>
+    vector.transfer_write %1, %0[%c0, %c0, %c0] {in_bounds = [true]} : vector<4xi32>, memref<4x32x16xi32, #gpu.address_space<workgroup>>
+    return
+  }
+
+  // CHECK-LABEL: @read_with_mask_poison_padding(
+  func.func @read_with_mask_poison_padding(%a: memref<1024x1024xf32>, %sz: index) {
+    %0 = memref.alloc() : memref<4x32x16xf32, #gpu.address_space<workgroup>>
+    %c0 = arith.constant 0 : index
+    %pad = ub.poison : f32
+    // CHECK: nvgpu.device_async_copy {{.*}}, {{.*}}, 4, %{{.*}} :
+    %mask = vector.create_mask %sz : vector<4xi1>
+    %1 = vector.transfer_read %a[%c0, %c0], %pad, %mask {in_bounds = [true]} : memref<1024x1024xf32>, vector<4xf32>
+    vector.transfer_write %1, %0[%c0, %c0, %c0] {in_bounds = [true]} : vector<4xf32>, memref<4x32x16xf32, #gpu.address_space<workgroup>>
+    return
+  }
+
+  // CHECK-LABEL: @negative_read_with_mask_nonzero_padding(
+  func.func @negative_read_with_mask_nonzero_padding(%a: memref<1024x1024xf32>, %sz: index) {
+    %0 = memref.alloc() : memref<4x32x16xf32, #gpu.address_space<workgroup>>
+    %c0 = arith.constant 0 : index
+    %pad = arith.constant 1.000000e+00 : f32
+    // CHECK-NOT: nvgpu.device_async_copy
+    //     CHECK: vector.transfer_write
+    %mask = vector.create_mask %sz : vector<4xi1>
+    %1 = vector.transfer_read %a[%c0, %c0], %pad, %mask {in_bounds = [true]} : memref<1024x1024xf32>, vector<4xf32>
+    vector.transfer_write %1, %0[%c0, %c0, %c0] {in_bounds = [true]} : vector<4xf32>, memref<4x32x16xf32, #gpu.address_space<workgroup>>
+    return
+  }
+
+  // CHECK-LABEL: @negative_read_with_mask_negative_zero_padding(
+  func.func @negative_read_with_mask_negative_zero_padding(%a: memref<1024x1024xf32>, %sz: index) {
+    %0 = memref.alloc() : memref<4x32x16xf32, #gpu.address_space<workgroup>>
+    %c0 = arith.constant 0 : index
+    %pad = arith.constant -0.000000e+00 : f32
+    // CHECK-NOT: nvgpu.device_async_copy
+    //     CHECK: vector.transfer_write
+    %mask = vector.create_mask %sz : vector<4xi1>
+    %1 = vector.transfer_read %a[%c0, %c0], %pad, %mask {in_bounds = [true]} : memref<1024x1024xf32>, vector<4xf32>
+    vector.transfer_write %1, %0[%c0, %c0, %c0] {in_bounds = [true]} : vector<4xf32>, memref<4x32x16xf32, #gpu.address_space<workgroup>>
+    return
+  }
+
+  // CHECK-LABEL: @negative_read_with_mask_i32_nonzero_padding(
+  func.func @negative_read_with_mask_i32_nonzero_padding(%a: memref<1024x1024xi32>, %sz: index) {
+    %0 = memref.alloc() : memref<4x32x16xi32, #gpu.address_space<workgroup>>
+    %c0 = arith.constant 0 : index
+    %pad = arith.constant 7 : i32
+    // CHECK-NOT: nvgpu.device_async_copy
+    //     CHECK: vector.transfer_write
+    %mask = vector.create_mask %sz : vector<4xi1>
+    %1 = vector.transfer_read %a[%c0, %c0], %pad, %mask {in_bounds = [true]} : memref<1024x1024xi32>, vector<4xi32>
+    vector.transfer_write %1, %0[%c0, %c0, %c0] {in_bounds = [true]} : vector<4xi32>, memref<4x32x16xi32, #gpu.address_space<workgroup>>
+    return
+  }
+
+  // CHECK-LABEL: @negative_read_with_mask_dynamic_padding(
+  func.func @negative_read_with_mask_dynamic_padding(%a: memref<1024x1024xf32>, %sz: index, %pad: f32) {
+    %0 = memref.alloc() : memref<4x32x16xf32, #gpu.address_space<workgroup>>
+    %c0 = arith.constant 0 : index
+    // CHECK-NOT: nvgpu.device_async_copy
+    //     CHECK: vector.transfer_write
+    %mask = vector.create_mask %sz : vector<4xi1>
+    %1 = vector.transfer_read %a[%c0, %c0], %pad, %mask {in_bounds = [true]} : memref<1024x1024xf32>, vector<4xf32>
+    vector.transfer_write %1, %0[%c0, %c0, %c0] {in_bounds = [true]} : vector<4xf32>, memref<4x32x16xf32, #gpu.address_space<workgroup>>
+    return
+  }
+
+  // A 128-bit element is stored in 16 bytes, so a single one is a valid copy.
+  // CHECK-LABEL: @read_with_mask_i128_zero_padding(
+  func.func @read_with_mask_i128_zero_padding(%a: memref<1024x1024xi128>, %sz: index) {
+    %0 = memref.alloc() : memref<4x32x1xi128, #gpu.address_space<workgroup>>
+    %c0 = arith.constant 0 : index
+    %pad = arith.constant 0 : i128
+    // CHECK: nvgpu.device_async_copy {{.*}}, {{.*}}, 1, %{{.*}} :
+    %mask = vector.create_mask %sz : vector<1xi1>
+    %1 = vector.transfer_read %a[%c0, %c0], %pad, %mask {in_bounds = [true]} : memref<1024x1024xi128>, vector<1xi128>
+    vector.transfer_write %1, %0[%c0, %c0, %c0] {in_bounds = [true]} : vector<1xi128>, memref<4x32x1xi128, #gpu.address_space<workgroup>>
+    return
+  }
   module attributes {transform.with_named_sequence} {
     transform.named_sequence @__transform_main(%variant_op: !transform.any_op {transform.readonly}) {
       %top_level_func = transform.structured.match ops{["func.func"]} in %variant_op : (!transform.any_op) -> !transform.any_op

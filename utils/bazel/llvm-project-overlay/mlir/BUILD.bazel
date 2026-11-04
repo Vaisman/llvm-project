@@ -3751,6 +3751,7 @@ cc_library(
         ":NVGPUPassIncGen",
         ":Pass",
         ":SideEffectInterfaces",
+        ":UBDialect",
         ":VectorDialect",
         "//llvm:Support",
     ],

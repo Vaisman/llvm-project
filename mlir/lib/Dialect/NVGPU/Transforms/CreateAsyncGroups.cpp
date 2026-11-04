@@ -11,9 +11,11 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/NVGPU/IR/NVGPUDialect.h"
 #include "mlir/Dialect/NVGPU/Transforms/Utils.h"
+#include "mlir/Dialect/UB/IR/UBMatchers.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Matchers.h"
 
 using namespace mlir;
 
@@ -147,10 +149,16 @@ static bool resultsInSupportedAsyncCopy(MemRefType memrefType,
   assert(vecType.getRank() == 1 && "expected 1-D vector");
   constexpr int64_t kSupportedCpAsyncAlignmentsInBytes[3] = {4, 8, 16};
 
-  // Condition 1: the copy size must be supported.
+  // Condition 1: the copy size must be supported. It is computed from the bit
+  // width of the element type, which is its storage size only for widths of 8,
+  // 16, 32, 64 or 128 bits (e.g. not for i1 or i4). index has no bit width.
+  Type elementType = vecType.getElementType();
+  if (!elementType.isIntOrFloat() ||
+      !llvm::is_contained({8u, 16u, 32u, 64u, 128u},
+                          elementType.getIntOrFloatBitWidth()))
+    return false;
   bool supportedCopySize = false;
   int64_t numElements = vecType.getNumElements();
-  Type elementType = vecType.getElementType();
   for (int64_t alignmentInBytes : kSupportedCpAsyncAlignmentsInBytes) {
     if (alignmentInBytes * 8 ==
         numElements * elementType.getIntOrFloatBitWidth()) {
@@ -198,8 +206,12 @@ void nvgpu::createAsyncGroups(RewriterBase &rewriter, Operation *op,
     // Look for compatible mask and padding.
     if (auto transferRead = dyn_cast<vector::TransferReadOp>(readOp)) {
       if (Value mask = transferRead.getMask()) {
-        if (getConstantIntValue(transferRead.getPadding()) ==
-            static_cast<int64_t>(0))
+        // The async copy zero-fills the elements that it does not read, so
+        // only a zero or poison padding is preserved.
+        Value padding = transferRead.getPadding();
+        if (!matchPattern(padding, m_Zero()) &&
+            !matchPattern(padding, m_PosZeroFloat()) &&
+            !matchPattern(padding, ub::m_Poison()))
           return;
         if (failed(getMaskOp(readOp)))
           return;
