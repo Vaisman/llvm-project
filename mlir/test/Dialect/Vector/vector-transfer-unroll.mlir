@@ -1,4 +1,4 @@
-// RUN: mlir-opt %s -test-vector-transfer-unrolling-patterns --split-input-file | FileCheck %s --check-prefix=ALL
+// RUN: mlir-opt %s -test-vector-transfer-unrolling-patterns --split-input-file | FileCheck %s --check-prefixes=ALL,CHECK
 // RUN: mlir-opt %s -test-vector-transfer-unrolling-patterns=reverse-unroll-order --split-input-file | FileCheck %s --check-prefixes=ALL,ORDER
 
 // ALL-LABEL:   func @transfer_read_unroll
